@@ -109,6 +109,17 @@ The key queries on hot paths have dedicated indexes verified with EXPLAIN:
 | **Exam Auth** | `POST` | `/api/v1/exams/{id}/access-token` | Student/Examiner/Admin | Issue exam-specific access token bound to student & exam |
 | **Exam Auth** | `POST` | `/api/v1/exams/{id}/start` | Student | Start session, compute `server_deadline`, issue short-lived session token |
 | **Exam Auth** | `POST` | `/api/v1/sessions/{id}/heartbeat` | Student | Re-issue fresh session token, rotate JTI, detect IP/User-Agent changes |
+| **Questions** | `POST` | `/api/v1/questions` | Examiner / Admin | Create question with type validation (MCQ, multi_select, short/long answer, image_upload) |
+| **Questions** | `GET` | `/api/v1/questions` | Examiner / Admin | List/filter questions by subject, difficulty, type, tags |
+| **Questions** | `GET` | `/api/v1/questions/{id}` | Examiner / Admin | Get detailed question by ID |
+| **Questions** | `PUT` | `/api/v1/questions/{id}` | Examiner (owner) / Admin | Update question |
+| **Questions** | `DELETE` | `/api/v1/questions/{id}` | Examiner (owner) / Admin | Soft delete / deactivate question |
+| **Exams** | `POST` | `/api/v1/exams` | Examiner / Admin | Create exam configuration with selection rules & proctoring settings |
+| **Exams** | `GET` | `/api/v1/exams` | Authenticated | List exams |
+| **Exams** | `GET` | `/api/v1/exams/{id}` | Authenticated | Get exam by ID |
+| **Exams** | `PUT` | `/api/v1/exams/{id}` | Examiner (owner) / Admin | Update exam configuration |
+| **Exams** | `POST` | `/api/v1/exams/{id}/publish` | Examiner (owner) / Admin | Publish exam |
+| **Exams** | `DELETE` | `/api/v1/exams/{id}` | Examiner (owner) / Admin | Delete exam |
 | **Sessions** | `GET` | `/api/v1/sessions/{id}/time-remaining` | Student/Examiner/Admin | Get `seconds_remaining` computed server-side and server time |
 | **Sessions** | `GET` | `/api/v1/sessions/{id}/paper` | Student/Examiner/Admin | Retrieve deterministic generated paper for active session |
 | **Answers** | `PUT` | `/api/v1/sessions/{id}/answers/{question_id}` | Student | Upsert candidate question answer with word count / option validation |
@@ -127,8 +138,11 @@ The key queries on hot paths have dedicated indexes verified with EXPLAIN:
 
 ---
 
-## Weeks 3–4 Requirements Implementation Checklist
+## Implementation Checklist (Weeks 1–4)
 
+- [x] **Database Schema & Migrations**: SQLAlchemy 2.0 ORM with typed `Mapped[]`, Alembic migrations (`0001_initial.py`, `0002_timed_exam_engine.py`, `0003_weeks_3_4.py`), seed script (`seed.py`).
+- [x] **JWT Auth & Role Separation**: Token issuance & validation with roles (`student`, `examiner`, `admin`), `require_role` dependency, session token rotation & JTI active tracking (`app/core/deps.py`, `app/core/security.py`).
+- [x] **Question Bank & Exam Config APIs**: Validations for MCQ, multi-select, short/long answer, image upload, exam creation, selection rules, time windows, and edit locks.
 - [x] **Timed Exam Session Engine**: `server_deadline` calculation on `/exams/{id}/start`, `GET /sessions/{id}/time-remaining`, deadline write rejection with grace window, APScheduler `DateTrigger` and 30s sweeper job (`app/services/session_service.py`, `app/services/scheduler.py`).
 - [x] **Answer Submission APIs**: `PUT /sessions/{id}/answers/{question_id}` upsert, option validation against candidate paper, word count validation and control character stripping for text answers, multipart image upload with Pillow re-encoding, EXIF stripping, thumbnail generation, magic byte validation (`app/services/session_service.py`, `app/services/storage.py`, `app/api/v1/sessions.py`).
 - [x] **Objective Auto-Evaluation**: Strategy pattern (`MCQScoringStrategy` and `MultiSelectScoringStrategy` with documented All-or-Nothing rule), `marks_override` support, non-negative score floor enforcement, score breakdown JSON, automatic trigger upon submission (`app/services/evaluation.py`).
