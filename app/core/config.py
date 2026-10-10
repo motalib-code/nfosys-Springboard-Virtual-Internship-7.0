@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     EXAM_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     SESSION_TOKEN_EXPIRE_MINUTES: int = 10
 
+    RUN_SCHEDULER: bool = True
+    SERVER_DEADLINE_GRACE_SECONDS: int = 3
+
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"

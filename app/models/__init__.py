@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 from app.models.enums import (
     UserRole, QuestionType, Difficulty, RandomizationMode,
-    ExamStatus, SessionStatus, ProctorEventType, GradingStatus
+    ExamStatus, SessionStatus, ProctorEventType, GradingStatus, SubmittedReason
 )
 
 
@@ -139,6 +139,9 @@ class ExamSession(Base):
     generated_paper: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     tab_switch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_flagged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    server_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_reason: Mapped[Optional[SubmittedReason]] = mapped_column(SQLEnum(SubmittedReason, native_enum=False), nullable=True)
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
