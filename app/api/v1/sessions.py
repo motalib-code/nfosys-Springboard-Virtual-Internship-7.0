@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, File, UploadFile, status
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.core.deps import get_db, get_current_user
@@ -30,6 +30,40 @@ def get_session_paper(
     db: Session = Depends(get_db)
 ):
     return SessionService.get_session_paper(db, id, current_user)
+
+
+@router.put("/{id}/answers/{question_id}", response_model=AnswerOut)
+def upsert_answer(
+    id: str,
+    question_id: str,
+    answer_in: AnswerSubmitRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    answer_in.question_id = question_id
+    return SessionService.submit_answer(db, id, answer_in, current_user)
+
+
+@router.post("/{id}/answers/{question_id}/image", response_model=AnswerOut)
+async def upload_image_answer(
+    id: str,
+    question_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    contents = await file.read()
+    filename = file.filename or "image.png"
+    return SessionService.upload_image_answer(db, id, question_id, contents, filename, current_user)
+
+
+@router.get("/{id}/answers", response_model=List[AnswerOut])
+def get_session_answers(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return SessionService.get_session_answers(db, id, current_user)
 
 
 @router.post("/{id}/answers", response_model=AnswerOut)

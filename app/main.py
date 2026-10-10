@@ -7,6 +7,8 @@ from app.api.v1.auth import router as auth_router, exam_auth_router
 from app.api.v1.questions import router as questions_router
 from app.api.v1.exams import router as exams_router
 from app.api.v1.sessions import router as sessions_router
+from app.api.v1.grading import router as grading_router
+from app.api.v1.proctoring import router as proctoring_router
 from app.services.scheduler import start_scheduler, shutdown_scheduler
 
 
@@ -30,6 +32,8 @@ app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(exam_auth_router, prefix=settings.API_V1_STR)
 app.include_router(questions_router, prefix=settings.API_V1_STR)
 app.include_router(exams_router, prefix=settings.API_V1_STR)
+app.include_router(proctoring_router, prefix=settings.API_V1_STR)
+app.include_router(grading_router, prefix=settings.API_V1_STR)
 app.include_router(sessions_router, prefix=settings.API_V1_STR)
 
 

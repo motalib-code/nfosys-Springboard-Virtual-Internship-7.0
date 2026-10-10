@@ -9,7 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 from app.models.enums import (
     UserRole, QuestionType, Difficulty, RandomizationMode,
-    ExamStatus, SessionStatus, ProctorEventType, GradingStatus, SubmittedReason
+    ExamStatus, SessionStatus, ProctorEventType, GradingStatus, SubmittedReason,
+    GradingQueueStatus
 )
 
 
@@ -139,6 +140,7 @@ class ExamSession(Base):
     generated_paper: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     tab_switch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_flagged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    suspicion_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     server_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_reason: Mapped[Optional[SubmittedReason]] = mapped_column(SQLEnum(SubmittedReason, native_enum=False), nullable=True)
     last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -165,6 +167,7 @@ class Answer(Base):
     selected_option_ids: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     text_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_answer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     marks_awarded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     graded_by: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     graded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -172,6 +175,15 @@ class Answer(Base):
 
     session: Mapped["ExamSession"] = relationship("ExamSession", back_populates="answers")
     question: Mapped["QuestionBank"] = relationship("QuestionBank", back_populates="answers")
+    ai_evaluations: Mapped[List["AIEvaluation"]] = relationship("AIEvaluation", back_populates="answer", cascade="all, delete-orphan")
+    grading_queue_item: Mapped[Optional["GradingQueue"]] = relationship("GradingQueue", back_populates="answer", uselist=False, cascade="all, delete-orphan")
+    grading_audit_logs: Mapped[List["GradingAuditLog"]] = relationship("GradingAuditLog", back_populates="answer", cascade="all, delete-orphan")
+
+    @property
+    def word_count(self) -> Optional[int]:
+        if self.text_answer:
+            return len(self.text_answer.strip().split())
+        return None
 
     __table_args__ = (
         UniqueConstraint("session_id", "question_id", name="uq_session_question_answer"),
@@ -187,12 +199,73 @@ class Result(Base):
     obtained_marks: Mapped[float] = mapped_column(Float, nullable=False)
     negative_deductions: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    score_breakdown: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     grading_status: Mapped[GradingStatus] = mapped_column(SQLEnum(GradingStatus, native_enum=False), default=GradingStatus.PENDING, index=True, nullable=False)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     session: Mapped["ExamSession"] = relationship("ExamSession", back_populates="result")
+
+
+class AIEvaluation(Base):
+    __tablename__ = "ai_evaluations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), index=True, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    suggested_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    justification: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    key_points_matched: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    key_points_missed: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ocr_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="success", nullable=False)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_usage: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer", back_populates="ai_evaluations")
+
+
+class GradingQueue(Base):
+    __tablename__ = "grading_queue"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("exam_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    exam_id: Mapped[str] = mapped_column(String(36), ForeignKey("exams.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[GradingQueueStatus] = mapped_column(SQLEnum(GradingQueueStatus, native_enum=False), default=GradingQueueStatus.PENDING, index=True, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claimed_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer", back_populates="grading_queue_item")
+
+    __table_args__ = (
+        Index("ix_grading_queue_exam_status_created_id", "exam_id", "status", "created_at", "id"),
+    )
+
+
+class GradingAuditLog(Base):
+    __tablename__ = "grading_audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), index=True, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    new_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer", back_populates="grading_audit_logs")
 
 
 class ProctorEvent(Base):

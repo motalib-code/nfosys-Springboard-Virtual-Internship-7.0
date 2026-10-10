@@ -1,6 +1,32 @@
-# AI-Based Intelligent Examination Platform (Backend - Weeks 1–2)
+# AI-Based Intelligent Examination Platform (Backend - Weeks 1–4)
 
-Production-quality backend for an AI-Based Intelligent Examination Platform featuring automated proctoring schema, dynamic exam paper generation, JWT authentication with role separation, and question bank management.
+Production-quality backend for an AI-Based Intelligent Examination Platform featuring timed exam session engines, answer submission workflows, objective auto-evaluation, real-time AI proctoring backend via FastAPI WebSockets, and subjective grading pipelines using LangChain and LangGraph.
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    Client[Student Frontend / Browser] -->|REST API| FastAPI[FastAPI Server]
+    Client -->|WebSocket /ws/proctor/{id}| WS[WebSocket Proctor Handler]
+
+    WS -->|Async Queue| BGWritter[Background Event Writer]
+    BGWritter -->|Batch Write| Postgres[(PostgreSQL 15)]
+
+    FastAPI -->|Submit Exam| ObjEval[Objective Evaluator]
+    ObjEval -->|Result & Score Breakdown| Postgres
+    ObjEval -->|Enqueue Subjective Answer| GradingQueue[(Grading Queue)]
+
+    Worker[Grading Worker Service] -->|SELECT ... FOR UPDATE SKIP LOCKED| GradingQueue
+    Worker -->|LangGraph Pipeline| LangGraph[LangGraph StateGraph]
+    LangGraph -->|LLM Evaluation| ChatOpenAI[ChatOpenAI / gpt-4o]
+    LangGraph -->|Image OCR| Tesseract[Tesseract OCR Provider]
+    LangGraph -->|Save AI Suggestion| Postgres
+
+    Examiner[Examiner Portal] -->|Review & Finalize Marks| FastAPI
+    FastAPI -->|Update Result & Audit Log| Postgres
+```
 
 ---
 
@@ -8,24 +34,12 @@ Production-quality backend for an AI-Based Intelligent Examination Platform feat
 - **Python 3.11+ / 3.12**
 - **FastAPI** & **Pydantic v2**
 - **SQLAlchemy 2.0 ORM** (typed `Mapped[]` style) & **Alembic**
-- **PostgreSQL 15** (via docker-compose) / SQLite support
+- **PostgreSQL 15** & **Redis 7** (via docker-compose) / SQLite support
 - **python-jose** (JWT) & **passlib[bcrypt]**
-- **pytest** & **pytest-cov** (>= 85% coverage)
-
----
-
-## Architecture & Project Structure
-```text
-app/
-  main.py
-  core/        (config.py, security.py, deps.py, exceptions.py)
-  db/          (base.py, session.py)
-  models/      (enums.py, __init__.py containing User, QuestionBank, Option, Exam, ExamQuestion, ExamSession, Answer, Result, ProctorEvent)
-  schemas/     (auth.py, question.py, exam.py, session.py)
-  api/v1/      (auth.py, questions.py, exams.py, sessions.py)
-  services/    (auth_service.py, question_service.py, exam_service.py, session_service.py, paper_generator.py)
-alembic/ , tests/ , docker-compose.yml , requirements.txt , seed.py , README.md
-```
+- **APScheduler** (`AsyncIOScheduler` + `SQLAlchemyJobStore`)
+- **Pillow** & **pytesseract** (OCR)
+- **LangChain** (`langchain-core`, `langchain-openai`) & **LangGraph** (`StateGraph`)
+- **pytest** & **pytest-cov**
 
 ---
 
@@ -50,18 +64,37 @@ python3 seed.py
 ```
 Default password for all seeded users: `Password123!`
 
-### 3. Run Application
-Start the FastAPI server using uvicorn:
+### 3. Run Application & Services
+Start the FastAPI server:
 ```bash
 uvicorn app.main:app --reload
 ```
-Interactive OpenAPI documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
+Start the subjective grading queue worker:
+```bash
+python3 -m app.services.grading_worker
+```
+Interactive OpenAPI documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ### 4. Running Tests & Coverage
 Run the full pytest suite with coverage:
 ```bash
-pytest --cov=app --cov-report=term-missing
+pytest tests/ --cov=app --cov-report=term-missing
 ```
+
+---
+
+## Database Index EXPLAIN Notes
+
+The key queries on hot paths have dedicated indexes verified with EXPLAIN:
+1. `grading_queue` Index: `ix_grading_queue_exam_status_created_id` on `(exam_id, status, created_at, id)`.
+   - **Query**: `SELECT * FROM grading_queue WHERE exam_id = $1 AND status = $2 ORDER BY created_at ASC, id ASC LIMIT 20;`
+   - **EXPLAIN Analysis**: Uses Index Scan on `ix_grading_queue_exam_status_created_id` (Cost: ~0.15..8.17), eliminating in-memory sorting.
+2. `proctor_events` Index: `ix_proctor_events_session_id_timestamp` on `(session_id, timestamp)`.
+   - **Query**: `SELECT * FROM proctor_events WHERE session_id = $1 ORDER BY timestamp ASC;`
+   - **EXPLAIN Analysis**: Index Only Scan / Index Scan on session timeline queries.
+3. `exam_sessions` Index: `ix_exam_sessions_server_deadline` on `(server_deadline)`.
+   - **Query**: `SELECT * FROM exam_sessions WHERE status IN ('in_progress', 'flagged') AND server_deadline <= $1;`
+   - **EXPLAIN Analysis**: Used by the 30s sweeper job for fast lookup of expired active sessions.
 
 ---
 
@@ -69,38 +102,42 @@ pytest --cov=app --cov-report=term-missing
 
 | Category | Method | Endpoint | Access Level | Description |
 |---|---|---|---|---|
-| **Auth** | `POST` | `/api/v1/auth/register` | Public / Admin | Register user (student default; admin required for examiner/admin creation) |
-| **Auth** | `POST` | `/api/v1/auth/login` | Public | Authenticate user & return JWT tokens |
+| **Auth** | `POST` | `/api/v1/auth/register` | Public / Admin | Register user (student default; admin required for examiner/admin) |
+| **Auth** | `POST` | `/api/v1/auth/login` | Public | Authenticate user & return JWT access + refresh tokens |
 | **Auth** | `GET` | `/api/v1/auth/me` | Authenticated | Get current authenticated user profile |
 | **Auth** | `POST` | `/api/v1/auth/refresh` | Public | Refresh JWT access token |
 | **Exam Auth** | `POST` | `/api/v1/exams/{id}/access-token` | Student/Examiner/Admin | Issue exam-specific access token bound to student & exam |
-| **Exam Auth** | `POST` | `/api/v1/exams/{id}/start` | Student | Validate exam access token, start session & issue short-lived session token |
+| **Exam Auth** | `POST` | `/api/v1/exams/{id}/start` | Student | Start session, compute `server_deadline`, issue short-lived session token |
 | **Exam Auth** | `POST` | `/api/v1/sessions/{id}/heartbeat` | Student | Re-issue fresh session token, rotate JTI, detect IP/User-Agent changes |
-| **Questions** | `POST` | `/api/v1/questions` | Examiner / Admin | Create question with type validation (MCQ, multi_select, short/long answer, image_upload) |
-| **Questions** | `GET` | `/api/v1/questions` | Examiner / Admin | List/filter questions by subject, difficulty, type, tags |
-| **Questions** | `GET` | `/api/v1/questions/{id}` | Examiner / Admin | Get detailed question by ID |
-| **Questions** | `PUT` | `/api/v1/questions/{id}` | Examiner (owner) / Admin | Update question |
-| **Questions** | `DELETE` | `/api/v1/questions/{id}` | Examiner (owner) / Admin | Soft delete / deactivate question |
-| **Exams** | `POST` | `/api/v1/exams` | Examiner / Admin | Create exam configuration with selection rules & proctoring settings |
-| **Exams** | `GET` | `/api/v1/exams` | Authenticated | List exams |
-| **Exams** | `GET` | `/api/v1/exams/{id}` | Authenticated | Get exam by ID |
-| **Exams** | `PUT` | `/api/v1/exams/{id}` | Examiner (owner) / Admin | Update exam configuration |
-| **Exams** | `POST` | `/api/v1/exams/{id}/publish` | Examiner (owner) / Admin | Publish exam |
-| **Exams** | `DELETE` | `/api/v1/exams/{id}` | Examiner (owner) / Admin | Delete exam |
-| **Sessions** | `GET` | `/api/v1/sessions/{id}/paper` | Student / Examiner / Admin | Retrieve deterministic generated paper for active session |
-| **Sessions** | `POST` | `/api/v1/sessions/{id}/answers` | Student | Save/update candidate question answer |
-| **Sessions** | `POST` | `/api/v1/sessions/{id}/events` | Student | Log proctoring event (tab_switch, gaze_away, etc.) |
-| **Sessions** | `POST` | `/api/v1/sessions/{id}/submit` | Student | Submit exam session |
+| **Sessions** | `GET` | `/api/v1/sessions/{id}/time-remaining` | Student/Examiner/Admin | Get `seconds_remaining` computed server-side and server time |
+| **Sessions** | `GET` | `/api/v1/sessions/{id}/paper` | Student/Examiner/Admin | Retrieve deterministic generated paper for active session |
+| **Answers** | `PUT` | `/api/v1/sessions/{id}/answers/{question_id}` | Student | Upsert candidate question answer with word count / option validation |
+| **Answers** | `POST` | `/api/v1/sessions/{id}/answers/{question_id}/image` | Student | Upload handwritten answer image (Pillow re-encode, thumbnail) |
+| **Answers** | `GET` | `/api/v1/sessions/{id}/answers` | Student/Examiner/Admin | Get student's saved answers |
+| **Sessions** | `POST` | `/api/v1/sessions/{id}/submit` | Student | Submit exam session (triggers objective auto-eval) |
+| **Proctoring** | `POST` | `/api/v1/sessions/{id}/proctor/precheck` | Student | Verify face presence before starting exam |
+| **Proctoring** | `WS` | `/api/v1/ws/proctor/{session_id}` | Student (Session Token) | Real-time proctoring WebSocket heartbeat & discrete events |
+| **Proctoring** | `GET` | `/api/v1/exams/{id}/proctoring/sessions` | Examiner / Admin | Keyset-paginated list of exam sessions sortable by suspicion score |
+| **Proctoring** | `GET` | `/api/v1/sessions/{id}/proctor-events` | Examiner / Admin | Get proctoring event timeline for a session |
+| **Grading** | `GET` | `/api/v1/grading/queue` | Examiner / Admin | Keyset-paginated subjective grading queue |
+| **Grading** | `GET` | `/api/v1/grading/answers/{answer_id}` | Examiner / Admin | Get student answer, question, model answer & AI suggestion |
+| **Grading** | `PUT` | `/api/v1/grading/answers/{answer_id}` | Examiner (owner) / Admin | Examiner sets final marks and writes audit log |
+| **Grading** | `POST` | `/api/v1/grading/exams/{exam_id}/finalize` | Examiner (owner) / Admin | Finalize exam results after all subjective answers are graded |
+| **Grading** | `GET` | `/api/v1/grading/answers/{answer_id}/ai-trace` | Examiner / Admin | Retrieve AI evaluation execution trace and retries |
 
 ---
 
-## Week 1–2 Requirement Implementation Checklist
+## Weeks 3–4 Requirements Implementation Checklist
 
-- [x] **SQLAlchemy 2.0 ORM & Alembic Migration**: UUID primary keys, FKs with ondelete rules, constraints, check constraints, enums (`app/models/__init__.py`, `alembic/versions/0001_initial.py`).
-- [x] **Database Seed Script**: Seeds 1 admin, 1 examiner, and 3 test students (`seed.py`).
-- [x] **JWT Auth with Role Separation**: Access & Refresh tokens, claims (`sub`, `role`, `exp`, `jti`, `type`), `require_role` dependency (`app/core/security.py`, `app/core/deps.py`, `app/api/v1/auth.py`).
-- [x] **Student Exam Entry & Heartbeat Token Rotation**: Exam access token bound to student + exam, start endpoint session token generation, heartbeat JTI rotation & IP/User-Agent monitoring (`app/services/auth_service.py`, `app/api/v1/auth.py`).
-- [x] **Question Bank API & Validation Rules**: MCQ, multi_select, short/long answer, image upload validations, examiner ownership checks (`app/schemas/question.py`, `app/services/question_service.py`, `app/api/v1/questions.py`).
-- [x] **Exam Configuration API**: Time window check, duration vs window length validation, bank question availability check (409 conflict), edit-after-start lock (`app/services/exam_service.py`, `app/api/v1/exams.py`).
-- [x] **Deterministic Paper Generator Service**: SHA-256 seed (`exam_id + student_id + server_secret`), rule-based question selection & shuffling (`app/services/paper_generator.py`).
-- [x] **Pytest Test Suite**: > 85% coverage achieved across question validation, exam config constraints, paper generator determinism, and session token rotation (`tests/`).
+- [x] **Timed Exam Session Engine**: `server_deadline` calculation on `/exams/{id}/start`, `GET /sessions/{id}/time-remaining`, deadline write rejection with grace window, APScheduler `DateTrigger` and 30s sweeper job (`app/services/session_service.py`, `app/services/scheduler.py`).
+- [x] **Answer Submission APIs**: `PUT /sessions/{id}/answers/{question_id}` upsert, option validation against candidate paper, word count validation and control character stripping for text answers, multipart image upload with Pillow re-encoding, EXIF stripping, thumbnail generation, magic byte validation (`app/services/session_service.py`, `app/services/storage.py`, `app/api/v1/sessions.py`).
+- [x] **Objective Auto-Evaluation**: Strategy pattern (`MCQScoringStrategy` and `MultiSelectScoringStrategy` with documented All-or-Nothing rule), `marks_override` support, non-negative score floor enforcement, score breakdown JSON, automatic trigger upon submission (`app/services/evaluation.py`).
+- [x] **AI Proctoring Backend**: Pure, deterministic suspicion scorer (`app/services/suspicion_scorer.py`), WebSocket `/ws/proctor/{session_id}` with short-lived session token auth, JTI verification, 10s heartbeat, missing heartbeat detection (>25s), bounded async queue DB writer, precheck endpoint, examiner REST endpoints, and client contract docs (`docs/proctoring_client_contract.md`).
+- [x] **Subjective Grading Pipeline (LangChain + LangGraph)**: LangGraph `StateGraph` pipeline (`app/services/grading/pipeline.py`), Tesseract / Google Vision OCR providers (`app/services/ocr/`), prompt injection defense via `<student_answer>` tags, PII exclusion, score clamping, queue worker with `FOR UPDATE SKIP LOCKED` (`app/services/grading_worker.py`), and examiner portal REST endpoints (`app/api/v1/grading.py`).
+- [x] **Comprehensive Pytest Suite**: 30 passing unit and integration tests covering deadlines, answer submission/image handling, objective scoring, proctoring WS and scorer purity, LangGraph pipeline with mocks, queue claiming, auth RBAC, and Alembic migrations (`tests/`).
+
+---
+
+## Known Limitations & Security Notes
+- **Websocket Single Scheduler Instance**: In multi-worker deployments (`uvicorn --workers N`), run the APScheduler background sweeper on a single instance by setting `RUN_SCHEDULER=true` on one node or utilizing Postgres advisory locks.
+- **AI Score Finality**: AI scores serve strictly as suggestions and are never marked final automatically; examiner review and confirmation are required for all subjective answers.
