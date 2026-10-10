@@ -10,6 +10,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.models import ExamSession, SessionStatus, SubmittedReason
+from app.services.evaluation import EvaluationService
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def auto_submit_session_job(session_id: str, db_session=None) -> None:
             session.submitted_reason = SubmittedReason.TIME_EXPIRED
             session.submitted_at = now
             db.commit()
+            EvaluationService.evaluate_objective(db, session_id)
             logger.info(f"Auto-submitted session {session_id} due to deadline expiration.")
         else:
             logger.info(f"Auto-submit skipped for session {session_id}: status is {session.status.value}")
@@ -100,6 +102,8 @@ def sweep_expired_sessions(db_session=None) -> None:
 
         if expired_sessions:
             db.commit()
+            for s in expired_sessions:
+                EvaluationService.evaluate_objective(db, s.id)
     except Exception as e:
         db.rollback()
         logger.error(f"Error in sweep_expired_sessions: {e}")

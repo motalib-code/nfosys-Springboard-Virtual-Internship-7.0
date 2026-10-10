@@ -1,15 +1,16 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, File, UploadFile, status
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.core.deps import get_db, get_current_user
 from app.models import User
 from app.schemas.session import (
-    ExamPaperResponse, AnswerSubmitRequest, AnswerOut,
+    ExamPaperResponse, AnswerSubmitRequest, AnswerUpsertRequest, AnswerOut,
     ProctorEventCreate, ProctorEventOut, SessionSubmitResponse,
-    TimeRemainingResponse
+    TimeRemainingResponse, ProctorPrecheckRequest
 )
 from app.services.session_service import SessionService
+from app.services.proctoring_service import ProctoringService
 
 router = APIRouter(prefix="/sessions", tags=["Exam Sessions"])
 
@@ -32,6 +33,38 @@ def get_session_paper(
     return SessionService.get_session_paper(db, id, current_user)
 
 
+@router.put("/{id}/answers/{question_id}", response_model=AnswerOut)
+def upsert_answer(
+    id: str,
+    question_id: str,
+    answer_in: AnswerUpsertRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return SessionService.upsert_answer(db, id, question_id, answer_in, current_user)
+
+
+@router.post("/{id}/answers/{question_id}/image", response_model=AnswerOut)
+async def upload_image_answer(
+    id: str,
+    question_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    content = await file.read()
+    return SessionService.upload_image_answer(db, id, question_id, content, file.filename or "upload.png", current_user)
+
+
+@router.get("/{id}/answers", response_model=List[AnswerOut])
+def get_student_answers(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return SessionService.get_student_answers(db, id, current_user)
+
+
 @router.post("/{id}/answers", response_model=AnswerOut)
 def submit_answer(
     id: str,
@@ -40,6 +73,25 @@ def submit_answer(
     db: Session = Depends(get_db)
 ):
     return SessionService.submit_answer(db, id, answer_in, current_user)
+
+
+@router.post("/{id}/proctor/precheck")
+def proctor_precheck(
+    id: str,
+    precheck_in: ProctorPrecheckRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return ProctoringService.proctor_precheck(db, id, precheck_in, current_user)
+
+
+@router.get("/{id}/proctor-events")
+def get_session_proctor_events(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return ProctoringService.get_session_proctor_events(db, id, current_user)
 
 
 @router.post("/{id}/events", response_model=ProctorEventOut, status_code=status.HTTP_201_CREATED)

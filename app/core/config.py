@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     RUN_SCHEDULER: bool = True
     SERVER_DEADLINE_GRACE_SECONDS: int = 3
+    UPLOAD_DIR: str = "uploads"
+    MAX_UPLOAD_SIZE_BYTES: int = 8 * 1024 * 1024  # 8 MB
 
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432

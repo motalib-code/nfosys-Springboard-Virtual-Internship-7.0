@@ -142,6 +142,7 @@ class ExamSession(Base):
     server_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_reason: Mapped[Optional[SubmittedReason]] = mapped_column(SQLEnum(SubmittedReason, native_enum=False), nullable=True)
     last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspicion_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -165,6 +166,7 @@ class Answer(Base):
     selected_option_ids: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     text_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_answer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     marks_awarded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     graded_by: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     graded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -189,6 +191,7 @@ class Result(Base):
     percentage: Mapped[float] = mapped_column(Float, nullable=False)
     grading_status: Mapped[GradingStatus] = mapped_column(SQLEnum(GradingStatus, native_enum=False), default=GradingStatus.PENDING, index=True, nullable=False)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    score_breakdown: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

@@ -7,7 +7,9 @@ from app.models import User, UserRole, ExamStatus
 from app.schemas.exam import (
     ExamCreate, ExamUpdate, ExamOut, ExamListResponse
 )
+from app.schemas.session import PaginatedProctorSessionsResponse
 from app.services.exam_service import ExamService
+from app.services.proctoring_service import ProctoringService
 
 router = APIRouter(prefix="/exams", tags=["Exams"])
 
@@ -38,6 +40,20 @@ def list_exams(
         size=size
     )
     return ExamListResponse(items=items, total=total, page=page, size=size)
+
+
+@router.get("/{id}/proctoring/sessions", response_model=PaginatedProctorSessionsResponse)
+def get_exam_proctoring_sessions(
+    id: str,
+    limit: int = Query(20, ge=1, le=100),
+    cursor: Optional[str] = Query(None),
+    flagged_only: bool = Query(False),
+    current_user: User = Depends(require_role(UserRole.EXAMINER, UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    return ProctoringService.get_exam_proctoring_sessions(
+        db, id, current_user, limit=limit, cursor=cursor, flagged_only=flagged_only
+    )
 
 
 @router.get("/{id}", response_model=ExamOut)
