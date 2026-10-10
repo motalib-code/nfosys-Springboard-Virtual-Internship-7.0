@@ -9,7 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 from app.models.enums import (
     UserRole, QuestionType, Difficulty, RandomizationMode,
-    ExamStatus, SessionStatus, ProctorEventType, GradingStatus, SubmittedReason
+    ExamStatus, SessionStatus, ProctorEventType, GradingStatus, SubmittedReason,
+    GradingQueueStatus
 )
 
 
@@ -142,6 +143,7 @@ class ExamSession(Base):
     server_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_reason: Mapped[Optional[SubmittedReason]] = mapped_column(SQLEnum(SubmittedReason, native_enum=False), nullable=True)
     last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspicion_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -165,6 +167,7 @@ class Answer(Base):
     selected_option_ids: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     text_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_answer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     marks_awarded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     graded_by: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     graded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -193,6 +196,69 @@ class Result(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     session: Mapped["ExamSession"] = relationship("ExamSession", back_populates="result")
+
+
+class AIEvaluation(Base):
+    __tablename__ = "ai_evaluations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), index=True, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    suggested_score: Mapped[float] = mapped_column(Float, nullable=False)
+    max_score: Mapped[float] = mapped_column(Float, nullable=False)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    key_points_matched: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    key_points_missed: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ocr_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="completed", nullable=False)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_usage: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer")
+
+
+class GradingQueue(Base):
+    __tablename__ = "grading_queue"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("exam_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    exam_id: Mapped[str] = mapped_column(String(36), ForeignKey("exams.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[GradingQueueStatus] = mapped_column(SQLEnum(GradingQueueStatus, native_enum=False), default=GradingQueueStatus.PENDING, index=True, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claimed_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer")
+    session: Mapped["ExamSession"] = relationship("ExamSession")
+    exam: Mapped["Exam"] = relationship("Exam")
+
+    __table_args__ = (
+        Index("ix_grading_queue_exam_status_created_id", "exam_id", "status", "created_at", "id"),
+    )
+
+
+class GradingAuditLog(Base):
+    __tablename__ = "grading_audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    answer_id: Mapped[str] = mapped_column(String(36), ForeignKey("answers.id", ondelete="CASCADE"), index=True, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    new_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    answer: Mapped["Answer"] = relationship("Answer")
+    actor: Mapped["User"] = relationship("User")
 
 
 class ProctorEvent(Base):
