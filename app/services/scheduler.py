@@ -57,6 +57,28 @@ def auto_submit_session_job(session_id: str, db_session=None) -> None:
             session.submitted_reason = SubmittedReason.TIME_EXPIRED
             session.submitted_at = now
             db.commit()
+
+            # Trigger evaluation & queue subjective answers
+            from app.services.evaluator import evaluate_objective
+            evaluate_objective(db, session.id)
+
+            from app.models import Answer, QuestionBank, QuestionType, GradingQueue, GradingQueueStatus
+            answers = db.query(Answer).filter(Answer.session_id == session.id).all()
+            for ans in answers:
+                q = db.query(QuestionBank).filter(QuestionBank.id == ans.question_id).first()
+                if q and q.question_type in [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER, QuestionType.IMAGE_UPLOAD]:
+                    existing_q = db.query(GradingQueue).filter(GradingQueue.answer_id == ans.id).first()
+                    if not existing_q:
+                        q_item = GradingQueue(
+                            answer_id=ans.id,
+                            session_id=session.id,
+                            exam_id=session.exam_id,
+                            status=GradingQueueStatus.PENDING,
+                            created_at=now,
+                            updated_at=now
+                        )
+                        db.add(q_item)
+            db.commit()
             logger.info(f"Auto-submitted session {session_id} due to deadline expiration.")
         else:
             logger.info(f"Auto-submit skipped for session {session_id}: status is {session.status.value}")
@@ -96,6 +118,26 @@ def sweep_expired_sessions(db_session=None) -> None:
             session.status = SessionStatus.AUTO_SUBMITTED
             session.submitted_reason = SubmittedReason.TIME_EXPIRED
             session.submitted_at = now
+
+            from app.services.evaluator import evaluate_objective
+            evaluate_objective(db, session.id)
+
+            from app.models import Answer, QuestionBank, QuestionType, GradingQueue, GradingQueueStatus
+            answers = db.query(Answer).filter(Answer.session_id == session.id).all()
+            for ans in answers:
+                q = db.query(QuestionBank).filter(QuestionBank.id == ans.question_id).first()
+                if q and q.question_type in [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER, QuestionType.IMAGE_UPLOAD]:
+                    existing_q = db.query(GradingQueue).filter(GradingQueue.answer_id == ans.id).first()
+                    if not existing_q:
+                        q_item = GradingQueue(
+                            answer_id=ans.id,
+                            session_id=session.id,
+                            exam_id=session.exam_id,
+                            status=GradingQueueStatus.PENDING,
+                            created_at=now,
+                            updated_at=now
+                        )
+                        db.add(q_item)
             logger.info(f"Sweeper auto-submitted expired session {session.id}.")
 
         if expired_sessions:
