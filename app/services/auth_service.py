@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from app.models import User, UserRole, Exam, ExamSession, SessionStatus, ExamStatus, ProctorEvent, ProctorEventType
+from app.services.scheduler import schedule_auto_submit_job
 from app.schemas.auth import UserRegister, UserLogin
 from app.core.security import (
     get_password_hash, verify_password, create_access_token,
@@ -135,11 +136,31 @@ class AuthService:
         else:
             if session.status not in [SessionStatus.NOT_STARTED, SessionStatus.IN_PROGRESS]:
                 raise ConflictException(f"Session already in {session.status.value} state")
+            if session.status == SessionStatus.IN_PROGRESS:
+                event = ProctorEvent(
+                    session_id=session.id,
+                    event_type=ProctorEventType.WINDOW_BLUR,
+                    timestamp=now,
+                    payload={
+                        "reason": "Secondary session start attempt detected for active session. Rotating session token.",
+                        "client_ip": client_ip,
+                        "user_agent": user_agent
+                    },
+                    severity="warning"
+                )
+                db.add(event)
             session.status = SessionStatus.IN_PROGRESS
             session.client_ip = client_ip
             session.user_agent = user_agent
             if not session.started_at:
                 session.started_at = now
+
+        # Compute server deadline
+        started_at = session.started_at if session.started_at.tzinfo is not None else session.started_at.replace(tzinfo=timezone.utc)
+        duration_delta = timedelta(minutes=exam.duration_minutes)
+        server_deadline = min(started_at + duration_delta, end)
+        session.server_deadline = server_deadline
+        session.last_activity_at = now
 
         # Create session token
         session_token = create_session_token(session.id, current_user.id, exam_id)
@@ -148,6 +169,9 @@ class AuthService:
 
         db.commit()
         db.refresh(session)
+
+        # Schedule auto-submit trigger job
+        schedule_auto_submit_job(session.id, session.server_deadline)
 
         return {
             "session_id": session.id,
@@ -194,8 +218,10 @@ class AuthService:
             )
             db.add(proctor_event)
 
+        now = datetime.now(timezone.utc)
         session.client_ip = client_ip
         session.user_agent = user_agent
+        session.last_activity_at = now
 
         # Re-issue a fresh session token and rotate active_token_jti
         fresh_session_token = create_session_token(session.id, current_user.id, session.exam_id)

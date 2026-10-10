@@ -6,11 +6,21 @@ from app.core.deps import get_db, get_current_user
 from app.models import User
 from app.schemas.session import (
     ExamPaperResponse, AnswerSubmitRequest, AnswerOut,
-    ProctorEventCreate, ProctorEventOut, SessionSubmitResponse
+    ProctorEventCreate, ProctorEventOut, SessionSubmitResponse,
+    TimeRemainingResponse
 )
 from app.services.session_service import SessionService
 
 router = APIRouter(prefix="/sessions", tags=["Exam Sessions"])
+
+
+@router.get("/{id}/time-remaining", response_model=TimeRemainingResponse)
+def get_time_remaining(
+    id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return SessionService.get_time_remaining(db, id, current_user)
 
 
 @router.get("/{id}/paper", response_model=ExamPaperResponse)

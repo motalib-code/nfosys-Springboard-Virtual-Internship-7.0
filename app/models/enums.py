@@ -51,6 +51,13 @@ class ProctorEventType(str, enum.Enum):
     FULLSCREEN_EXIT = "fullscreen_exit"
 
 
+class SubmittedReason(str, enum.Enum):
+    MANUAL = "manual"
+    TIME_EXPIRED = "time_expired"
+    PROCTOR_TERMINATED = "proctor_terminated"
+    ADMIN_FORCED = "admin_forced"
+
+
 class GradingStatus(str, enum.Enum):
     PENDING = "pending"
     AUTO_GRADED = "auto_graded"

@@ -50,3 +50,11 @@ class SessionSubmitResponse(BaseModel):
     session_id: str
     status: SessionStatus
     submitted_at: datetime
+
+
+class TimeRemainingResponse(BaseModel):
+    session_id: str
+    seconds_remaining: int
+    server_time: datetime
+    server_deadline: Optional[datetime] = None
+    status: SessionStatus
