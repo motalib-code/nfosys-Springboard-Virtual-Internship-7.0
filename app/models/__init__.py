@@ -165,6 +165,7 @@ class Answer(Base):
     selected_option_ids: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     text_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     image_answer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     marks_awarded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     graded_by: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     graded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -193,6 +194,25 @@ class Result(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     session: Mapped["ExamSession"] = relationship("ExamSession", back_populates="result")
+    items: Mapped[List["ResultItem"]] = relationship("ResultItem", back_populates="result", cascade="all, delete-orphan")
+
+
+class ResultItem(Base):
+    __tablename__ = "result_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    result_id: Mapped[str] = mapped_column(String(36), ForeignKey("results.id", ondelete="CASCADE"), index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("exam_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    question_id: Mapped[str] = mapped_column(String(36), ForeignKey("question_bank.id", ondelete="CASCADE"), index=True, nullable=False)
+    question_type: Mapped[QuestionType] = mapped_column(SQLEnum(QuestionType, native_enum=False), nullable=False)
+    max_marks: Mapped[float] = mapped_column(Float, nullable=False)
+    marks_awarded: Mapped[float] = mapped_column(Float, nullable=False)
+    negative_deduction: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    scoring_strategy: Mapped[str] = mapped_column(String(100), nullable=False)
+    scoring_details: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    result: Mapped["Result"] = relationship("Result", back_populates="items")
 
 
 class ProctorEvent(Base):

@@ -16,6 +16,30 @@ class Settings(BaseSettings):
 
     RUN_SCHEDULER: bool = True
     SERVER_DEADLINE_GRACE_SECONDS: int = 3
+    SESSION_SUBMIT_RETRY_MAX: int = 3
+
+    SHORT_ANSWER_MIN_WORDS: int = 1
+    SHORT_ANSWER_MAX_WORDS: int = 150
+    LONG_ANSWER_MIN_WORDS: int = 1
+    LONG_ANSWER_MAX_WORDS: int = 1000
+    ANSWER_TEXT_MAX_CHARS: int = 10000
+
+    ANSWER_IMAGE_MAX_SIZE_MB: int = 8
+    STORAGE_BACKEND: str = "local"
+    LOCAL_STORAGE_ROOT: str = "storage"
+
+    EXAM_OBTAINED_MARKS_FLOOR: float = 0.0
+    MULTI_SELECT_SCORING_STRATEGY: str = "all_or_nothing"
+
+    LLM_PROVIDER: str = "openai"
+    LLM_MODEL_NAME: str = "gpt-4o"
+    LLM_API_KEY: str = ""
+    LLM_TIMEOUT_SECONDS: int = 30
+
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
 
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
