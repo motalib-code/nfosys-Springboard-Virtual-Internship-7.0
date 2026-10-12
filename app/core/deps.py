@@ -1,4 +1,4 @@
-from typing import Generator, List, Callable
+from typing import Generator, List, Callable, Any
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -41,11 +41,19 @@ def get_current_user(
     return user
 
 
-def require_role(*roles: UserRole) -> Callable:
+def require_role(*roles: Any) -> Callable:
+    allowed_roles = []
+    for r in roles:
+        if isinstance(r, (list, tuple, set)):
+            allowed_roles.extend(r)
+        else:
+            allowed_roles.append(r)
+
     def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
+        if current_user.role not in allowed_roles:
+            role_names = [r.value if hasattr(r, "value") else str(r) for r in allowed_roles]
             raise PermissionDeniedException(
-                detail=f"Operation not permitted. Required role: {[r.value for r in roles]}"
+                detail=f"Operation not permitted. Required role: {role_names}"
             )
         return current_user
     return role_checker

@@ -19,5 +19,44 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: exam_platform_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    container_name: exam_platform_api
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/exam_db
+      - REDIS_URL=redis://redis:6379/0
+      - RUN_SCHEDULER=true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    container_name: exam_platform_worker
+    restart: always
+    command: python3 -m app.services.grading_worker
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/exam_db
+      - REDIS_URL=redis://redis:6379/0
+      - RUN_SCHEDULER=false
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
 volumes:
   postgres_data:

@@ -15,9 +15,11 @@ class AnswerOut(BaseModel):
     id: str
     session_id: str
     question_id: str
-    selected_option_ids: Optional[List[str]]
-    text_answer: Optional[str]
-    image_answer_url: Optional[str]
+    selected_option_ids: Optional[List[str]] = None
+    text_answer: Optional[str] = None
+    image_answer_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    word_count: Optional[int] = None
     answered_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

@@ -73,3 +73,12 @@ def decode_jwt_token(token: str) -> Dict[str, Any]:
         return payload
     except JWTError:
         return {}
+
+
+def verify_token(token: str, token_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    payload = decode_jwt_token(token)
+    if not payload:
+        return None
+    if token_type and payload.get("type") != token_type:
+        return None
+    return payload

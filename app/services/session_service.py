@@ -1,9 +1,14 @@
+import re
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
-from app.models import ExamSession, Exam, Answer, ProctorEvent, SessionStatus, User, UserRole, ProctorEventType, SubmittedReason
+from app.models import (
+    ExamSession, Exam, Answer, Option, QuestionBank, QuestionType, ProctorEvent,
+    SessionStatus, User, UserRole, ProctorEventType, SubmittedReason
+)
 from app.schemas.session import AnswerSubmitRequest, ProctorEventCreate
 from app.services.paper_generator import PaperGenerator
+from app.services.storage import storage_backend
 from app.core.config import settings
 from app.core.exceptions import NotFoundException, PermissionDeniedException, BadRequestException, ConflictException
 
@@ -90,11 +95,56 @@ class SessionService:
         now = datetime.now(timezone.utc)
         session.last_activity_at = now
 
-        # Find existing answer or create new
+        # Ensure session paper is generated and question is in generated_paper
+        if not session.generated_paper:
+            exam = db.query(Exam).filter(Exam.id == session.exam_id).first()
+            paper_data = PaperGenerator.generate_paper(db, exam, session.student_id)
+            session.paper_seed = paper_data["seed"]
+            session.generated_paper = paper_data["questions"]
+            db.commit()
+            db.refresh(session)
+
+        paper_questions = session.generated_paper or []
+        target_q = next((q for q in paper_questions if q.get("question_id") == answer_in.question_id or q.get("id") == answer_in.question_id), None)
+        if not target_q:
+            raise BadRequestException("Question does not belong to this exam paper")
+
+        question_db = db.query(QuestionBank).filter(QuestionBank.id == answer_in.question_id).first()
+        if not question_db:
+            raise NotFoundException("Question not found in question bank")
+
+        q_type = question_db.question_type
+        word_count = None
+
+        if q_type in [QuestionType.MCQ, QuestionType.MULTI_SELECT]:
+            selected_ids = answer_in.selected_option_ids or []
+            if q_type == QuestionType.MCQ and len(selected_ids) > 1:
+                raise BadRequestException("MCQ allows at most 1 selected option")
+
+            valid_option_ids = {opt.id for opt in db.query(Option.id).filter(Option.question_id == answer_in.question_id).all()}
+            for opt_id in selected_ids:
+                if opt_id not in valid_option_ids:
+                    raise BadRequestException(f"Option {opt_id} does not belong to question {answer_in.question_id}")
+
+        elif q_type in [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER]:
+            raw_text = answer_in.text_answer or ""
+            clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw_text)
+            words = clean_text.strip().split()
+            word_count = len(words)
+
+            min_words = settings.SHORT_ANSWER_MIN_WORDS if q_type == QuestionType.SHORT_ANSWER else settings.LONG_ANSWER_MIN_WORDS
+            max_words = settings.SHORT_ANSWER_MAX_WORDS if q_type == QuestionType.SHORT_ANSWER else settings.LONG_ANSWER_MAX_WORDS
+
+            if word_count < min_words or word_count > max_words:
+                raise BadRequestException(f"Word count ({word_count}) out of bounds. Expected [{min_words}, {max_words}].")
+
+            answer_in.text_answer = clean_text
+
         existing = db.query(Answer).filter(
             Answer.session_id == session_id,
             Answer.question_id == answer_in.question_id
         ).first()
+
         if existing:
             existing.selected_option_ids = answer_in.selected_option_ids
             existing.text_answer = answer_in.text_answer
@@ -115,6 +165,82 @@ class SessionService:
         db.commit()
         db.refresh(answer_record)
         return answer_record
+
+    @staticmethod
+    def upload_image_answer(
+        db: Session,
+        session_id: str,
+        question_id: str,
+        file_bytes: bytes,
+        filename: str,
+        current_user: User
+    ) -> Answer:
+        session = db.query(ExamSession).filter(ExamSession.id == session_id).first()
+        if not session:
+            raise NotFoundException("Exam session not found")
+
+        if current_user.role == UserRole.STUDENT and session.student_id != current_user.id:
+            raise PermissionDeniedException("Access denied")
+
+        SessionService._validate_session_active_and_within_deadline(db, session)
+
+        if len(file_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
+            raise BadRequestException(f"File size exceeds maximum limit of {settings.MAX_UPLOAD_SIZE_BYTES} bytes")
+
+        if not session.generated_paper:
+            exam = db.query(Exam).filter(Exam.id == session.exam_id).first()
+            paper_data = PaperGenerator.generate_paper(db, exam, session.student_id)
+            session.paper_seed = paper_data["seed"]
+            session.generated_paper = paper_data["questions"]
+            db.commit()
+            db.refresh(session)
+
+        paper_questions = session.generated_paper or []
+        target_q = next((q for q in paper_questions if q.get("question_id") == question_id or q.get("id") == question_id), None)
+        if not target_q:
+            raise BadRequestException("Question does not belong to this exam paper")
+
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else "png"
+        image_url, thumb_url = storage_backend.save_image_and_thumbnail(file_bytes, ext)
+
+        now = datetime.now(timezone.utc)
+        session.last_activity_at = now
+
+        existing = db.query(Answer).filter(
+            Answer.session_id == session_id,
+            Answer.question_id == question_id
+        ).first()
+
+        if existing:
+            existing.image_answer_url = image_url
+            existing.thumbnail_url = thumb_url
+            existing.answered_at = now
+            answer_record = existing
+        else:
+            answer_record = Answer(
+                session_id=session_id,
+                question_id=question_id,
+                image_answer_url=image_url,
+                thumbnail_url=thumb_url,
+                answered_at=now
+            )
+            db.add(answer_record)
+
+        db.commit()
+        db.refresh(answer_record)
+        return answer_record
+
+    @staticmethod
+    def get_session_answers(db: Session, session_id: str, current_user: User) -> List[Answer]:
+        session = db.query(ExamSession).filter(ExamSession.id == session_id).first()
+        if not session:
+            raise NotFoundException("Exam session not found")
+
+        if current_user.role == UserRole.STUDENT and session.student_id != current_user.id:
+            raise PermissionDeniedException("Access denied")
+
+        answers = db.query(Answer).filter(Answer.session_id == session_id).all()
+        return answers
 
     @staticmethod
     def record_proctor_event(db: Session, session_id: str, event_in: ProctorEventCreate, current_user: User) -> ProctorEvent:
@@ -170,5 +296,11 @@ class SessionService:
         session.last_activity_at = now
 
         db.commit()
+        db.refresh(session)
+
+        # Trigger objective auto-evaluation
+        from app.services.evaluation import evaluate_objective
+        evaluate_objective(db, session.id)
+
         db.refresh(session)
         return session

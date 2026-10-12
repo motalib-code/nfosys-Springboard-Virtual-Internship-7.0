@@ -49,6 +49,19 @@ class ProctorEventType(str, enum.Enum):
     NO_FACE = "no_face"
     WINDOW_BLUR = "window_blur"
     FULLSCREEN_EXIT = "fullscreen_exit"
+    HEARTBEAT_LOST = "heartbeat_lost"
+    CONCURRENT_SESSION = "concurrent_session"
+    IP_CHANGE = "ip_change"
+    SCORE_UPDATE = "score_update"
+
+
+class GradingQueueStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING_AI = "processing_ai"
+    READY_FOR_REVIEW = "ready_for_review"
+    IN_REVIEW = "in_review"
+    GRADED = "graded"
+    FAILED = "failed"
 
 
 class SubmittedReason(str, enum.Enum):

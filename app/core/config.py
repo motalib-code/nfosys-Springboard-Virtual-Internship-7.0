@@ -17,6 +17,26 @@ class Settings(BaseSettings):
     RUN_SCHEDULER: bool = True
     SERVER_DEADLINE_GRACE_SECONDS: int = 3
 
+    MAX_UPLOAD_SIZE_BYTES: int = 8 * 1024 * 1024  # 8 MB
+    UPLOAD_DIR: str = "uploads"
+
+    REDIS_URL: Optional[str] = None
+
+    OPENAI_API_KEY: Optional[str] = "mock-key"
+    OPENAI_MODEL_NAME: str = "gpt-4o"
+    LLM_TIMEOUT_SECONDS: int = 30
+    OCR_PROVIDER: str = "tesseract"
+
+    SHORT_ANSWER_MIN_WORDS: int = 1
+    SHORT_ANSWER_MAX_WORDS: int = 150
+    LONG_ANSWER_MIN_WORDS: int = 1
+    LONG_ANSWER_MAX_WORDS: int = 1000
+
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
+
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
